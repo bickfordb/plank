@@ -1,30 +1,22 @@
 (ns plank
   (:require clojure.main
             clojure.core
-            ))
+            clojure.string
+            clojure.java.io
+            clojure.test))
+
+(def ^:dynamic *class-loader* nil)
 
 (defn display-help-task
   [cmd help]
   (println (format "%-20s %s" cmd help)))
 
-(def default-project
-  {:title ""
-   :description ""
-   :version ""
-   :dependencies []
-   :source-paths ["src"]})
-
-(def classloader-urls
-  (map #(.toURL (.toURI (java.io.File. %))) ["build/" "src/" (System/getenv "CLOJURE_JAR")]))
-
-(println classloader-urls)
-
-(def class-loader (java.net.URLClassLoader. (into-array java.net.URL classloader-urls)
-                                            ))
-
-(println "resource" (.getResource class-loader "foo.clj"))
-
-(def clojure-rt (. class-loader loadClass "clojure.lang.RT"))
+(def project (atom {:title ""
+                    :description ""
+                    :version ""
+                    :dependencies []
+                    :test-paths ["test/"]
+                    :source-paths ["src/"]}))
 
 (defn display-help
   []
@@ -34,29 +26,32 @@
   (display-help-task "help" "Display a help message")
   (display-help-task "run" "Run the project"))
 
-
 (defn load-project
   []
   (clojure.main/load-script "project.clj"))
 
-(defmacro with-project-compiler
-  [& body]
-  `(with-bindings {#'*compile-path* "./build"
-                   #'*compile-files* true
-                   #'*use-context-classloader* false
-                   clojure.lang.Compiler/LOADER class-loader}
-    ~@body
-    ))
+(defn with-project-class-loader
+  [f]
+  (let [classloader-paths (concat ["build/"]
+                                  (:source-paths (:options @project))
+                                  (:test-paths (:options @project))
+                                  [(System/getenv "CLOJURE_JAR")])
+         classloader-urls (map #(java.net.URL. (str "file:" %)) classloader-paths)
+         class-loader (java.net.URLClassLoader. (into-array java.net.URL classloader-urls))]
+      (with-bindings {#'*compile-path* "./build"
+                      #'*compile-files* true
+                      #'*use-context-classloader* false
+                      clojure.lang.Compiler/LOADER class-loader}
+        (f class-loader))))
 
-(defn build-project
-  [path]
-  (with-project-compiler
-    (let [s (namespace (symbol path))
-          params (into-array java.lang.Class [(.loadClass class-loader "java.lang.String")])
-          load (. clojure-rt getMethod "load" params)]
-      (.invoke load nil (into-array java.lang.Object [s])))))
+;(defn build-project
+;  [path]
+;  (with-project-class-loader
+;    (fn [class-loader] (let [s (namespace (symbol path))
+;                 params (into-array java.lang.Class [(.loadClass class-loader "java.lang.String")])
+;                 load (. (. class-loader loadClass "clojure.lang.RT") getMethod "load" params)]
+;             (.invoke load nil (into-array java.lang.Object [s]))))))
 
-(def project (atom {}))
 
 (defn parse-project-dependencies
   [dependencies]
@@ -65,7 +60,7 @@
 (defn parse-project-params
   [params]
   (apply conj
-         {}
+         @project
          (for [[k v] (apply hash-map params)]
            (condp = k
              :main {:namespace (namespace v) :name (name v)}
@@ -86,13 +81,45 @@
 (defn run-project
   [[path & args]]
   (load-project)
-  (with-project-compiler
-    (-> path symbol namespace symbol require)
-    ((-> path symbol eval))))
+  (with-project-class-loader
+    (fn [classloader]
+      (-> path symbol namespace symbol require)
+      ((-> path symbol eval)))))
+
+
+(defn path->module
+  [subpath]
+  (clojure.string/replace (clojure.string/replace subpath #"[/]" ".") #".clj$" ""))
+
+(defn find-test-paths-in-test-root
+  [test-root]
+  (let [test-root-file  (clojure.java.io/file test-root)
+        test-root-path (.getName test-root-file)]
+    (for [test-file (file-seq test-root-file)
+          :when (and
+                  (.isFile test-file)
+                  (.endsWith (.getName test-file) ".clj"))]
+      (let [path (.getPath test-file)
+          subpath (clojure.string/replace path #"[^/]+[/](.+)$" "$1")]
+        (path->module subpath)))))
+
+(defn find-test-paths
+  []
+  (let [test-roots (:test-paths (:options @project))
+        test-paths (reduce concat (map find-test-paths-in-test-root test-roots))]
+    (doseq [test-path test-paths]
+      (println "found test path" (symbol test-path))
+      (require (symbol test-path))
+      ))
+    (clojure.test/run-all-tests))
 
 (defn test-project
   []
-  (println "running tests"))
+  (load-project)
+  (with-project-class-loader (fn [class-loader]
+                               (find-test-paths)
+
+                               )))
 
 (defn run-main
   [args]
