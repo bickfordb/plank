@@ -1,0 +1,34 @@
+#!/bin/bash
+set -e
+
+if [ "$VERBOSE" = "1" ];
+then
+  set -x
+fi
+
+export PLANK_ROOT="."
+export PLANK_HOME=~/.plank
+
+dl="wget"
+clj_version="1.5.1"
+clj_dl=http://repo1.maven.org/maven2/org/clojure/clojure/$clj_version/clojure-$clj_version.zip
+export CLOJURE_JAR=$PLANK_HOME/lib/clojure-$clj_version.jar
+java=java
+
+if [ ! -f "$CLOJURE_JAR" ];
+then
+  (
+    mkdir -p $PLANK_HOME
+    cd $PLANK_HOME
+    mkdir build
+    cd build
+    $dl $clj_dl
+    unzip clojure-$clj_version.zip
+    mkdir -p $(dirname $CLOJURE_JAR)
+    mv clojure-$clj_version/clojure-$clj_version.jar $CLOJURE_JAR
+    rm -rf build
+  )
+fi
+
+$java -cp $CLOJURE_JAR clojure.main plank.clj $@
+
