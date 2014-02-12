@@ -5,30 +5,33 @@
             clojure.java.io
             clojure.test))
 
-(def ^:dynamic *class-loader* nil)
+
+(def PROJECT-CLJ "project.clj")
 
 (defn display-help-task
   [cmd help]
   (println (format "%-20s %s" cmd help)))
 
-(def project (atom {:title ""
-                    :description ""
-                    :version ""
-                    :dependencies []
-                    :test-paths ["test/"]
-                    :source-paths ["src/"]}))
+(def default-project-parameters {:dependencies []
+                                 :test-paths ["test/"]
+                                 :resource-paths ["resources/"]
+                                 :source-paths ["src/"]})
+
+(def project (atom {}))
 
 (defn display-help
-  []
+  [args]
   (println "Plank is a tool for building Clojure projects")
   (println)
   (println "Tasks")
   (display-help-task "help" "Display a help message")
+  (display-help-task "test" "Run the tests")
+  (display-help-task "jar" "Produce a jar")
   (display-help-task "run" "Run the project"))
 
 (defn load-project
   []
-  (clojure.main/load-script "project.clj"))
+  (clojure.main/load-script PROJECT-CLJ))
 
 (defn with-project-class-loader
   [f]
@@ -44,39 +47,21 @@
                       clojure.lang.Compiler/LOADER class-loader}
         (f class-loader))))
 
-;(defn build-project
-;  [path]
-;  (with-project-class-loader
-;    (fn [class-loader] (let [s (namespace (symbol path))
-;                 params (into-array java.lang.Class [(.loadClass class-loader "java.lang.String")])
-;                 load (. (. class-loader loadClass "clojure.lang.RT") getMethod "load" params)]
-;             (.invoke load nil (into-array java.lang.Object [s]))))))
-
-
-(defn parse-project-dependencies
-  [dependencies]
-  (apply vector (for [[k v] dependencies] {:path [(namespace k) (name k)] :version v})))
-
-(defn parse-project-params
-  [params]
-  (apply conj
-         @project
-         (for [[k v] (apply hash-map params)]
-           (condp = k
-             :main {:namespace (namespace v) :name (name v)}
-             :dependencies {:dependencies (parse-project-dependencies v)}
-             nil))))
+(defn check-project
+  [project]
+  true)
 
 (defmacro defproject
-  [project-name project-description & project-params]
+  [package version & project-params]
   (let
-    [project-name (name project-name)
-     project-opts (plank/parse-project-params project-params)]
+    [opts (apply hash-map project-params)
+     proj {:package package
+           :version version
+           :options (conj default-project-parameters opts)}]
     `(let []
-       (reset! plank/project {:title ~project-name
-                              :description ~project-description
-                              :options ~project-opts})
-       (println "defproject:" @plank/project))))
+       (reset! plank/project (quote ~proj))
+       ;//(println "project" @plank/project)
+       )))
 
 (defn run-project
   [[path & args]]
@@ -85,7 +70,6 @@
     (fn [classloader]
       (-> path symbol namespace symbol require)
       ((-> path symbol eval)))))
-
 
 (defn path->module
   [subpath]
@@ -108,27 +92,42 @@
   (let [test-roots (:test-paths (:options @project))
         test-paths (reduce concat (map find-test-paths-in-test-root test-roots))]
     (doseq [test-path test-paths]
-      (println "found test path" (symbol test-path))
-      (require (symbol test-path))
-      ))
+      (require (symbol test-path))))
     (clojure.test/run-all-tests))
 
 (defn test-project
-  []
+  [args]
   (load-project)
   (with-project-class-loader (fn [class-loader]
-                               (find-test-paths)
+                               (find-test-paths))))
 
-                               )))
+(defn create-jar
+  [args]
+  )
+
+(defn init-project
+  [args]
+  (let [[package-name & _] args
+        version "1.0"
+        dst (clojure.java.io/file PROJECT-CLJ)
+        payload (list
+                  'defproject
+                  (symbol package-name)
+                  version)
+        payload (apply list (concat payload (apply concat (seq default-project-parameters))))]
+    (spit dst payload)
+  ))
 
 (defn run-main
   [args]
   (let [[command & args] args]
     (condp = command
           "run" (run-project args)
-          "test" (test-project)
-          "help" (display-help)
-          (display-help))))
+          "test" (test-project args)
+          "init" (init-project args)
+          "help" (display-help args)
+          "jar" (create-jar args)
+          (display-help args))))
 
 (run-main *command-line-args*)
 
