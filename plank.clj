@@ -98,8 +98,7 @@
 (defn test-project
   [args]
   (load-project)
-  (with-project-class-loader (fn [class-loader]
-                               (find-test-paths))))
+  (with-project-class-loader (fn [class-loader] (find-test-paths))))
 
 (defn create-jar
   [args]
