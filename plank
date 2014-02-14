@@ -6,20 +6,22 @@ then
   set -x
 fi
 
-export PLANK_ROOT="."
-export PLANK_HOME=~/.plank
+# FIXME: walk up the directory structure to find a ".plank" directory
+export PLANK_ROOT=.plank
+export PLANK_JAR=dist/plank.jar
+
 
 dl="wget"
 clj_version="1.5.1"
 clj_dl=http://repo1.maven.org/maven2/org/clojure/clojure/$clj_version/clojure-$clj_version.zip
-export CLOJURE_JAR=$PLANK_HOME/lib/clojure-$clj_version.jar
+export CLOJURE_JAR=$PLANK_ROOT/lib/clojure-$clj_version.jar
 java=java
 
 if [ ! -f "$CLOJURE_JAR" ];
 then
   (
-    mkdir -p $PLANK_HOME
-    cd $PLANK_HOME
+    mkdir -p $PLANK_ROOT
+    cd $PLANK_ROOT
     mkdir build
     cd build
     $dl $clj_dl

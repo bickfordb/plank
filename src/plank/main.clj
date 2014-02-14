@@ -31,16 +31,33 @@
 
 (defn load-project
   []
-  (clojure.main/load-script PROJECT-CLJ))
+  (clojure.main/load-script PROJECT-CLJ)
+  (println "project:" @project)
+  )
+
+(defn class-loader-urls
+  []
+  (map #(java.net.URL. (str "file:" %)) (concat
+                                          ;["build/"]
+                                          ["/Users/bran/projects/plank/foo/clojure-1.5.1/clojure-1.5.1.jar"]
+                                          (:source-paths (:options @project))
+                                          (:test-paths (:options @project))
+                                          [(System/getenv "CLOJURE_JAR")])))
+
+(defn load-string-in-project
+  [s]
+  (let [p (plank.Loader. (class-loader-urls) true "project-build/")]
+    (.invoke p "clojure.core" "load-string" [s])))
+
+(defn test-eval-project
+  [args]
+  (load-project)
+  (println "result:"
+  (load-string-in-project (str '(+ 1 2)))))
 
 (defn with-project-class-loader
   [f]
-  (let [classloader-paths (concat ["build/"]
-                                  (:source-paths (:options @project))
-                                  (:test-paths (:options @project))
-                                  [(System/getenv "CLOJURE_JAR")])
-         classloader-urls (map #(java.net.URL. (str "file:" %)) classloader-paths)
-         class-loader (java.net.URLClassLoader. (into-array java.net.URL classloader-urls))]
+  (let [class-loader (java.net.URLClassLoader. (into-array java.net.URL (class-loader-urls)))]
       (with-bindings {#'*compile-path* "./build"
                       #'*compile-files* true
                       #'*use-context-classloader* false
@@ -59,9 +76,7 @@
            :version version
            :options (conj default-project-parameters opts)}]
     `(let []
-       (reset! plank/project (quote ~proj))
-       ;//(println "project" @plank/project)
-       )))
+       (reset! plank/project (quote ~proj)))))
 
 (defn run-project
   [[path & args]]
@@ -91,14 +106,21 @@
   []
   (let [test-roots (:test-paths (:options @project))
         test-paths (reduce concat (map find-test-paths-in-test-root test-roots))]
-    (doseq [test-path test-paths]
-      (require (symbol test-path))))
-    (clojure.test/run-all-tests))
+    test-paths))
 
 (defn test-project
   [args]
   (load-project)
-  (with-project-class-loader (fn [class-loader] (find-test-paths))))
+  (let [test-paths (find-test-paths)
+        test-paths (apply vector test-paths)]
+    (load-string-in-project
+      (str
+        `(do
+           (doseq [test-path# ~test-paths]
+             (require (symbol test-path#)))
+           (require 'clojure.test)
+           (clojure.test/run-all-tests))))))
+
 
 (defn create-jar
   [args]
@@ -114,16 +136,17 @@
                   (symbol package-name)
                   version)
         payload (apply list (concat payload (apply concat (seq default-project-parameters))))]
-    (spit dst payload)
-  ))
+    (spit dst payload)))
 
 (defn run-main
   [args]
+  (println "args" args)
   (let [[command & args] args]
     (condp = command
           "run" (run-project args)
           "test" (test-project args)
           "init" (init-project args)
+          "eval" (test-eval-project args)
           "help" (display-help args)
           "jar" (create-jar args)
           (display-help args))))
